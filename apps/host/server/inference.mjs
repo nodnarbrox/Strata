@@ -27,6 +27,7 @@ const CANDIDATES = [
 
 let backend = null;
 let checkedAt = 0;
+let checkedKey = null;
 
 /**
  * True when this process must not simulate inference.
@@ -82,6 +83,20 @@ async function probeStrata(baseUrl) {
 }
 
 export async function detectBackend({ force = false } = {}) {
+  // Reuse a confirmed endpoint before probing a worker that may not be running.
+  // Previously even cached fallback requests paid the worker probe timeout.
+  // Supervisor lifecycle and endpoint/config changes invalidate this shortcut.
+  const supervised = supervisor.status();
+  const key = JSON.stringify([strataUrl(), requiresRealEngine(), supervised.status,
+    supervised.port, supervised.startedAt, supervised.modelId]);
+  if (!force && backend && !['demo', 'unavailable'].includes(backend.kind)
+      && checkedKey === key && Date.now() - checkedAt < 20_000) return backend;
+  const found = await discoverBackend();
+  checkedKey = key;
+  return found;
+}
+
+async function discoverBackend() {
   // 1. Strata's own engine, always first: it is the product's inference path.
   const strata = await probeStrata(strataUrl());
   if (strata) {
@@ -106,8 +121,6 @@ export async function detectBackend({ force = false } = {}) {
     checkedAt = Date.now();
     return backend;
   }
-
-  if (!force && backend && backend.kind !== 'engine' && Date.now() - checkedAt < 20_000) return backend;
 
   for (const c of CANDIDATES) {
     try {
