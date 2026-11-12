@@ -11,8 +11,10 @@ test('confirmed fallback skips repeated worker probes; force and URL changes rec
   const oldHome = process.env.STRATA_HOME;
   const oldUrl = process.env.STRATA_SERVER_URL;
   const oldReal = process.env.STRATA_REAL_ENGINE;
+  const oldFast = process.env.STRATA_FAST_BACKEND_DISCOVERY;
   process.env.STRATA_HOME = home;
   process.env.STRATA_REAL_ENGINE = '1';
+  process.env.STRATA_FAST_BACKEND_DISCOVERY = '1';
   let calls = [];
   globalThis.fetch = async url => {
     calls.push(String(url));
@@ -54,10 +56,13 @@ test('confirmed fallback skips repeated worker probes; force and URL changes rec
     calls = [];
     assert.equal((await detectBackend()).modelId, 'native');
     assert.deepEqual(calls, [], 'confirmed native workers also reuse discovery');
+    delete process.env.STRATA_FAST_BACKEND_DISCOVERY;
+    await detectBackend();
+    assert.equal(calls.length, 2, 'release behavior still probes native workers by default');
   } finally {
     Date.now = originalNow;
     globalThis.fetch = originalFetch;
-    for (const [name, value] of [['STRATA_HOME', oldHome], ['STRATA_SERVER_URL', oldUrl], ['STRATA_REAL_ENGINE', oldReal]]) {
+    for (const [name, value] of [['STRATA_HOME', oldHome], ['STRATA_SERVER_URL', oldUrl], ['STRATA_REAL_ENGINE', oldReal], ['STRATA_FAST_BACKEND_DISCOVERY', oldFast]]) {
       if (value === undefined) delete process.env[name]; else process.env[name] = value;
     }
     rmSync(home, { recursive: true, force: true });

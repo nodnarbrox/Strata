@@ -7,6 +7,7 @@ const out = resolve(process.argv[2]);
 mkdirSync(out,{recursive:true});
 process.env.STRATA_HOME=resolve(out,'strata-home');
 process.env.STRATA_REAL_ENGINE='1';
+process.env.STRATA_FAST_BACKEND_DISCOVERY='1';
 const { detectBackend, proxyCompletion } = await import('../server/inference.mjs');
 const backend=await detectBackend({force:true});
 if (backend.kind!=='openai-compatible' || backend.baseUrl!=='http://127.0.0.1:1234/v1') throw Error('Unexpected backend: '+JSON.stringify(backend));

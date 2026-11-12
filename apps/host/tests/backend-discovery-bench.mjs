@@ -7,6 +7,7 @@ import { join } from 'node:path';
 const home = mkdtempSync(join(tmpdir(), 'strata-discovery-bench-'));
 process.env.STRATA_HOME = home;
 process.env.STRATA_REAL_ENGINE = '1';
+process.env.STRATA_FAST_BACKEND_DISCOVERY = '1';
 let probes = 0;
 const worker = createServer((req, res) => {
   if (req.url === '/v1/status') {

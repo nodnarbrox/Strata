@@ -87,16 +87,17 @@ export async function detectBackend({ force = false } = {}) {
   // Previously even cached fallback requests paid the worker probe timeout.
   // Supervisor lifecycle and endpoint/config changes invalidate this shortcut.
   const supervised = supervisor.status();
+  const cacheEnabled = process.env.STRATA_FAST_BACKEND_DISCOVERY === '1';
   const key = JSON.stringify([strataUrl(), requiresRealEngine(), supervised.status,
     supervised.port, supervised.startedAt, supervised.modelId]);
-  if (!force && backend && !['demo', 'unavailable'].includes(backend.kind)
+  if (cacheEnabled && !force && backend && !['demo', 'unavailable'].includes(backend.kind)
       && checkedKey === key && Date.now() - checkedAt < 20_000) return backend;
-  const found = await discoverBackend();
+  const found = await discoverBackend({ force, cacheEnabled });
   checkedKey = key;
   return found;
 }
 
-async function discoverBackend() {
+async function discoverBackend({ force, cacheEnabled }) {
   // 1. Strata's own engine, always first: it is the product's inference path.
   const strata = await probeStrata(strataUrl());
   if (strata) {
@@ -121,6 +122,10 @@ async function discoverBackend() {
     checkedAt = Date.now();
     return backend;
   }
+
+  // Preserve the release discovery order unless the startup shortcut is selected.
+  if (!cacheEnabled && !force && backend && backend.kind !== 'engine'
+      && Date.now() - checkedAt < 20_000) return backend;
 
   for (const c of CANDIDATES) {
     try {
