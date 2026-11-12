@@ -29,7 +29,18 @@ try {
     }
     rows.push({forced:force, calls:10, worker_probes:probes-before, elapsed_ms:performance.now()-start});
   }
-  console.log(JSON.stringify({scope:'real HTTP discovery, 80ms delayed worker fixture; not model generation',rows}));
+  const concurrent = [];
+  for (const enabled of [false, true]) {
+    if (enabled) process.env.STRATA_FAST_BACKEND_DISCOVERY = '1';
+    else delete process.env.STRATA_FAST_BACKEND_DISCOVERY;
+    const start = performance.now(), before = probes;
+    const requests = Array.from({length:8}, (_, i) => detectBackend({force:i===0}));
+    const found = await Promise.all(requests);
+    if (found.some(be => be.kind !== 'strata' || be.modelId !== 'fixture')) throw Error('Wrong backend');
+    concurrent.push({cache_enabled:enabled, calls:8, worker_probes:probes-before,
+      elapsed_ms:performance.now()-start});
+  }
+  console.log(JSON.stringify({scope:'real HTTP discovery, 80ms delayed worker fixture; not model generation',rows,concurrent}));
 } finally {
   worker.closeAllConnections();
   await new Promise(resolve=>worker.close(resolve));

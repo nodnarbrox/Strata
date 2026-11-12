@@ -28,6 +28,8 @@ const CANDIDATES = [
 let backend = null;
 let checkedAt = 0;
 let checkedKey = null;
+let pendingDiscovery = null;
+let discoveryEpoch = 0;
 
 /**
  * True when this process must not simulate inference.
@@ -90,20 +92,35 @@ export async function detectBackend({ force = false } = {}) {
   const cacheEnabled = process.env.STRATA_FAST_BACKEND_DISCOVERY === '1';
   const key = JSON.stringify([strataUrl(), requiresRealEngine(), supervised.status,
     supervised.port, supervised.startedAt, supervised.modelId]);
+  if (cacheEnabled && !force && pendingDiscovery?.key === key) return pendingDiscovery.promise;
   if (cacheEnabled && !force && backend && !['demo', 'unavailable'].includes(backend.kind)
       && checkedKey === key && Date.now() - checkedAt < 20_000) return backend;
-  const found = await discoverBackend({ force, cacheEnabled });
-  checkedKey = key;
-  return found;
+  const epoch = ++discoveryEpoch;
+  const discover = async () => {
+    const result = await discoverBackend({ force, cacheEnabled });
+    // A slow probe for a prior endpoint/refresh must not replace a newer result.
+    if (!cacheEnabled || epoch === discoveryEpoch) {
+      backend = result.backend;
+      checkedAt = result.checkedAt;
+      checkedKey = key;
+    }
+    return result.backend;
+  };
+  if (!cacheEnabled) return discover();
+  const pending = { key, promise: discover() };
+  pendingDiscovery = pending;
+  try {
+    return await pending.promise;
+  } finally {
+    if (pendingDiscovery === pending) pendingDiscovery = null;
+  }
 }
 
 async function discoverBackend({ force, cacheEnabled }) {
   // 1. Strata's own engine, always first: it is the product's inference path.
   const strata = await probeStrata(strataUrl());
   if (strata) {
-    backend = strata;
-    checkedAt = Date.now();
-    return backend;
+    return { backend: strata, checkedAt: Date.now() };
   }
 
   if (requiresRealEngine() && !supervisor.isRunning()) {
@@ -113,33 +130,31 @@ async function discoverBackend({ force, cacheEnabled }) {
 
   if (supervisor.isRunning()) {
     const status = supervisor.status();
-    backend = {
+    const found = {
       kind: 'engine',
       name: 'Strata engine · llama.cpp',
       baseUrl: `http://127.0.0.1:${status.port}/v1`,
       models: status.modelId ? [status.modelId] : [],
     };
-    checkedAt = Date.now();
-    return backend;
+    return { backend: found, checkedAt: Date.now() };
   }
 
   // Preserve the release discovery order unless the startup shortcut is selected.
   if (!cacheEnabled && !force && backend && backend.kind !== 'engine'
-      && Date.now() - checkedAt < 20_000) return backend;
+      && Date.now() - checkedAt < 20_000) return { backend, checkedAt };
 
   for (const c of CANDIDATES) {
     try {
       const res = await fetch(`${c.url}/models`, { signal: AbortSignal.timeout(700) });
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        backend = {
+        const found = {
           kind: 'openai-compatible',
           name: c.name,
           baseUrl: c.url,
           models: (data?.data ?? []).map((m) => m.id),
         };
-        checkedAt = Date.now();
-        return backend;
+        return { backend: found, checkedAt: Date.now() };
       }
     } catch {
       /* try the next candidate */
@@ -147,7 +162,7 @@ async function discoverBackend({ force, cacheEnabled }) {
   }
 
   if (requiresRealEngine()) {
-    backend = {
+    const found = {
       kind: 'unavailable',
       name: 'No Strata engine',
       baseUrl: null,
@@ -156,12 +171,11 @@ async function discoverBackend({ force, cacheEnabled }) {
         `No Strata engine answered at ${strataUrl()} and no supervised engine is running. ` +
         'Start Strata (or load a model) and retry. Simulated output is disabled in this build.',
     };
-    checkedAt = Date.now();
-    return backend;
+    return { backend: found, checkedAt: Date.now() };
   }
 
   const binary = supervisor.findBinary() ?? (await which('llama-server'));
-  backend = {
+  const found = {
     kind: 'demo',
     name: binary ? 'llama.cpp (engine not running)' : 'Strata demo engine',
     baseUrl: null,
@@ -170,8 +184,7 @@ async function discoverBackend({ force, cacheEnabled }) {
     // Every demo frame is labelled for the UI; nothing here may be recorded as a real result.
     simulated: true,
   };
-  checkedAt = Date.now();
-  return backend;
+  return { backend: found, checkedAt: Date.now() };
 }
 
 export function currentBackend() {
