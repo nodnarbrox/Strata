@@ -42,6 +42,8 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--version", action=_VersionAction, nargs=0,
                     help="print the version and the interpreter this terminal runs on")
     sp = ap.add_subparsers(dest="command", required=True)
+    from strata_cli import liquid_cmd
+    liquid_cmd.add_parser(sp)
     serve = sp.add_parser("serve", help="start the existing Strata inference server in the foreground")
     serve.add_argument("--profile", "--config", dest="config", required=True, metavar="CONFIG.json")
     serve.add_argument("--engine", choices=("strata", "mock"), default="strata",
@@ -2128,6 +2130,9 @@ def _repair_access(a: argparse.Namespace) -> int:
 
 def _run(a: argparse.Namespace) -> int:
     try:
+        if a.command == "liquid":
+            from strata_cli import liquid_cmd
+            return liquid_cmd.run(a)
         if a.command == "serve":
             return _serve(a)
         if a.command == "install":

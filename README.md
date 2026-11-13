@@ -211,3 +211,8 @@ Thank you to everyone who supports Strata.
 
 **Sponsorships, hardware partnerships or collaborations:** [niko.veit@outlook.com](mailto:niko.veit@outlook.com).
 
+# Liquid model support in this fork
+
+Experimental native CPU LFM2.5-8B-A1B support is available through
+`python strata.py liquid`. See [build instructions, API and measured limits](docs/LIQUID_NATIVE.md).
+
