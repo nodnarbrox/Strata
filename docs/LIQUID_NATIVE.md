@@ -1,14 +1,16 @@
 # Native Liquid CPU support in this fork
 
-Status: experimental CPU architecture support. Real generation works, but this
-port has not qualified transparent parity with the pinned reference engine.
+Status: experimental CPU architecture support. An opt-in Linux build using
+pinned reference GGML kernels and matching cache padding passed five complete
+reference generation comparisons. This is bounded parity evidence; the default
+vendored build and other configurations do not inherit that result.
 
 This fork adds an explicit `strata liquid` command for LiquidAI
 LFM2.5-8B-A1B GGUF (`general.architecture = lfm2moe`). Existing Strata launch
 commands and the Qwen/DeepSeek engine paths are unchanged.
 
-The new C++ graph executes the model with Strata's vendored GGML CPU kernels.
-It does not link llama.cpp, call `llama_decode`, launch `llama-server`, or
+The new C++ graph executes the model with the selected GGML CPU kernels.
+It does not link `libllama`, call `llama_decode`, launch `llama-server`, or
 discover another inference server. Hugging Face Tokenizers only encodes and
 decodes text; Jinja renders the actual template stored in the GGUF.
 
@@ -31,6 +33,34 @@ cmake -S src/liquid -B build-liquid -DCMAKE_BUILD_TYPE=Release
 cmake --build build-liquid --config Release -j 2
 python -m pip install numpy tokenizers jinja2
 ```
+
+For the separately qualified Linux reference-kernel path, supply matching GGML
+headers, CPU library and base library explicitly. All three are required. This
+uses the existing libraries without downloading them or building an inference
+server. Keep the complete compatible runtime bundle available at execution time.
+
+```sh
+cmake -S src/liquid -B build-liquid-reference -DCMAKE_BUILD_TYPE=Release \
+  -DSTRATA_LIQUID_GGML_INCLUDE_DIR=/path/reference/include \
+  -DSTRATA_LIQUID_GGML_CPU_LIBRARY=/path/reference/runtime/libggml-cpu-haswell.so \
+  -DSTRATA_LIQUID_GGML_BASE_LIBRARY=/path/reference/runtime/libggml-base.so
+cmake --build build-liquid-reference -j 2
+```
+
+Select `build-liquid-reference/libstrata-liquid.so` using `--library` or
+`STRATA_LIQUID_LIBRARY`. Headers and shared libraries must be from the same
+build; arbitrary versions are not qualified. The checked bundle is GGML0.28
+from reference commit `8642541b255bfb5dc39cd351a178be09013a55d6`:
+CPU SHA256 `5bd145bd299d66c80a766252659b20d25b5300090089aa542862388a3c219aa6`,
+base SHA256 `50d78f64f3242d5f5618686f3239ceea0bb5e49310cd7eef8789830d3cb853de`.
+If that bundle requires a newer system ABI, use its compatible loader and
+libraries as a unit. Only Linux external linkage has been checked.
+
+This path also rounds the visible K/V cache length to256-token blocks and
+masks unused positions. The compact and padded CPU attention reductions start
+diverging at257 keys in the checked configuration; using the same arithmetic
+geometry prevents those differences from accumulating. The setting applies to
+every prompt, with no question-specific branches or answer-token controls.
 
 With a single-configuration generator such as Ninja, the output is
 `build-liquid/libstrata-liquid.so` (Linux) or `build-liquid/strata-liquid.dll`
@@ -126,6 +156,35 @@ began small and amplified through the quantized graph. This does not establish
 their sole cause or broad output quality. The independent synthetic oracle
 passed, but it cannot establish production-checkpoint equivalence. Use the
 reference path for work that requires previously qualified exact behavior.
+
+The opt-in pinned-kernel follow-up preserved the native graph and checkpoint.
+Kernel replacement alone matched27 prompt positions and four whole replies,
+but a copying reply first differed at decision position319. Common-prefix
+numerical diagnosis localized its first logit drift to position256, beginning
+in the first attention layer. A synthetic operator test reproduced compact
+versus padded differences above256 keys with the same kernel library.
+
+Matching that cache geometry then gave zero logit error across all320 replay
+positions and passed a fresh five-task reference/native/reference generation
+trial: arithmetic, logic, instruction following, the original wrong code reply
+and a longer copying reply. Every generated ID and natural stop matched. The
+known wrong answer remains wrong: this qualifies the checked engine behavior,
+not new reasoning ability. Teacher-forced replay is diagnostic evidence only;
+the generation comparisons use actual greedy logits without supplied answers.
+
+On an i5-9500 with six physical CPU cores, one sequence and4096 context, the
+trial generated1385 tokens per arm. Reference took62.2904 seconds
+(22.2346 tokens/second), native65.6193 (21.1066), repeat reference62.5265
+(22.1506). Timing includes sequential prompt processing and decoding, excluding
+loading. The native path was slower on this panel. No100x speedup, GPU support,
+LoRA support or broad checkpoint equivalence follows from these five tests.
+
+The packaged CMake build subsequently passed all10 existing independent
+synthetic/HTTP checks and all five fresh complete generation comparisons against
+those reference repeats. Its measured baseline was1385 tokens in65.8552 seconds,
+**21.0310 generated tokens/second**. Invalid partial paths, missing headers and
+missing shared libraries were rejected during configuration. These checks use
+the pinned Linux CPU bundle; external Windows linkage remains unsupported.
 
 The SSE endpoint carries measured prompt/decode timings. Its first answer token
 comes from prompt processing, so `predicted_n` counts subsequent decode forwards.

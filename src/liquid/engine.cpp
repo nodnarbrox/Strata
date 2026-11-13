@@ -1,6 +1,6 @@
 // Native, single-sequence CPU LFM2-MoE graph for Strata. No llama_decode/server.
 // Architecture reference: llama.cpp 8642541b (MIT), src/models/lfm*.cpp.
-// The graph uses Strata's vendored GGML kernels and mmap reader. State belongs
+// The graph uses the selected GGML CPU kernels and Strata's mmap reader. State belongs
 // to this engine: gated B*X history and F16 attention K/V are reset together.
 #include "strata/artifact/gguf_reader.hpp"
 #include "ggml.h"
@@ -217,9 +217,20 @@ struct Engine {
                 auto * kwrite = ggml_view_3d(g, s.keys, hd, 1, hk, s.keys->nb[1], s.keys->nb[2], offset);
                 auto * vwrite = ggml_view_3d(g, s.values, hd, 1, hk, s.values->nb[1], s.values->nb[2], offset);
                 ggml_build_forward_expand(gf, ggml_cpy(g, k, kwrite)); ggml_build_forward_expand(gf, ggml_cpy(g, v, vwrite));
+#ifdef STRATA_LIQUID_REFERENCE_KV_PADDING
+                // Match the reference CPU attention reduction geometry at cache boundaries.
+                const int n_kv = std::min(ctx, ((position + 1 + 255) / 256) * 256);
+                auto * kr = ggml_view_3d(g, s.keys, hd, n_kv, hk, s.keys->nb[1], s.keys->nb[2], 0);
+                auto * vr = ggml_view_3d(g, s.values, hd, n_kv, hk, s.values->nb[1], s.values->nb[2], 0);
+                auto * mask = ggml_new_tensor_2d(g, GGML_TYPE_F16, n_kv, 1);
+                auto * mask_data = static_cast<ggml_fp16_t *>(mask->data);
+                for (int i = 0; i < n_kv; ++i) mask_data[i] = ggml_fp32_to_fp16(i <= position ? 0.0f : -INFINITY);
+                auto * attn = ggml_flash_attn_ext(g, q, kr, vr, mask, 1.0f / std::sqrt(float(hd)), 0, 0);
+#else
                 auto * kr = ggml_view_3d(g, s.keys, hd, position + 1, hk, s.keys->nb[1], s.keys->nb[2], 0);
                 auto * vr = ggml_view_3d(g, s.values, hd, position + 1, hk, s.values->nb[1], s.values->nb[2], 0);
                 auto * attn = ggml_flash_attn_ext(g, q, kr, vr, nullptr, 1.0f / std::sqrt(float(hd)), 0, 0);
+#endif
                 ggml_prec_set_acc(attn, GGML_PREC_F32);
                 cur = mm(w(il, "attn_output.weight"), ggml_reshape_2d(g, attn, d, 1));
             } else {
